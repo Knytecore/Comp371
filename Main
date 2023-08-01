@@ -1,0 +1,809 @@
+
+// COMP 371 Assignment 1
+//
+// Created by Jizhou Yang 19/07/2023.
+//
+// Inspired by the following tutorials:
+// - https://learnopengl.com/Getting-started/Hello-Window
+// - https://learnopengl.com/Getting-started/Hello-Triangle
+
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+#include <vector>
+
+
+
+#include <GL/glew.h>    // Include GLEW - OpenGL Extension Wrangler
+
+#include <GLFW/glfw3.h> // GLFW provides a cross-platform interface for creating a graphical context,
+						// initializing OpenGL and binding inputs
+
+#include <glm/glm.hpp>  // GLM is an optimized math library with syntax to similar to OpenGL Shading Language
+#include <glm/gtc/matrix_transform.hpp> // include this to create transformation matrices
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/random.hpp>
+
+// Key callback function
+void key_callback(GLFWwindow * window, int key, int scancode, int action, int mods);
+
+// Screen parameters
+GLuint screenWidth = 1024; // Screen width in pixels
+GLuint screenHeight = 768; // Screen height in pixels
+
+// Matrix for view and projection
+glm::mat4 viewMat; // View matrix
+glm::mat4 projMat; // Projection matrix
+
+// RGB colors
+glm::vec3 redColor(1.f, 0.f, 0.f); // Red color (RGB: 1,0,0)
+glm::vec3 yellowColor(1.f, 1.f, 0.f); // Yellow color (RGB: 1,1,0)
+glm::vec3 greenColor(0.f, 1.f, 0.f); // Green color (RGB: 0,1,0)
+glm::vec3 blueColor(0.f, 0.f, 1.f); // Blue color (RGB: 0,0,1)
+
+// Grid parameters
+GLuint vaoGrid; // Vertex Array Object for grid
+GLuint vboGrid; // Vertex Buffer Object for grid
+int gridSize; // Size of the grid
+
+// Axes parameters
+GLuint vaoAxes; // Vertex Array Object for axes
+GLuint vboAxes; // Vertex Buffer Object for axes
+
+// Cube parameters
+GLuint vaoCube; // Vertex Array Object for cube
+GLuint vboCube; // Vertex Buffer Object for cube
+GLuint eboCube; // Element Buffer Object for cube
+
+// Net parameters
+GLuint vaoNet; // Vertex Array Object for net
+GLuint vboNet; // Vertex Buffer Object for net
+int netSize; // Size of the net
+GLuint shaderProgram; // Shader program ID
+
+// Control parameters
+float scale_value = 1.f; // Scale factor
+glm::vec3 position_model(0.f); // Position of the model
+glm::vec3 rotation_model(0.f); // Rotation of the model
+
+glm::vec3 position_modelP2(1.f);
+
+glm::vec3 position_world(0.f); // Position of the world
+glm::vec3 rotation_world(0.f); // Rotation of the world
+
+int renderMode = 2; // Render mode (0 for point, 1 for line, 2 for fill)
+
+
+const char* getVertexShaderSource()
+{
+	// For now, you use a string for your shader code, in the assignment, shaders will be stored in .glsl files
+	return
+		"#version 330 core\n"
+		"layout (location = 0) in vec3 aPos;"
+
+		""
+		"uniform mat4 model;"
+		"uniform mat4 view = mat4(1.0);"  // default value for view matrix (identity)
+		"uniform mat4 projection = mat4(1.0);"
+		""
+
+		"void main()"
+		"{"
+		"   gl_Position = projection * view * model *vec4(aPos, 1.0);"
+		"}";
+}
+
+const char* getFragmentShaderSource()
+{
+	return
+		"#version 330 core\n"
+		"uniform vec3 materialColor;"
+		"out vec4 FragColor;"
+		"void main()"
+		"{"
+		"    FragColor = vec4(materialColor, 1.f);"
+		"}";
+}
+
+int compileAndLinkShaders()
+{
+	// compile and link shader program
+	// return shader program id
+	// ------------------------------------
+
+	// vertex shader
+	int vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	const char* vertexShaderSource = getVertexShaderSource();
+	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+	glCompileShader(vertexShader);
+
+	// check for shader compile errors
+	int success;
+	char infoLog[512];
+	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+	if (!success)
+	{
+		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+		std::cerr << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+	}
+
+	// fragment shader
+	int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	const char* fragmentShaderSource = getFragmentShaderSource();
+	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+	glCompileShader(fragmentShader);
+
+	// check for shader compile errors
+	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+	if (!success)
+	{
+		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+		std::cerr << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+	}
+
+	// link shaders
+	int shaderProgram = glCreateProgram();
+	glAttachShader(shaderProgram, vertexShader);
+	glAttachShader(shaderProgram, fragmentShader);
+	glLinkProgram(shaderProgram);
+
+	// check for linking errors
+	glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+	if (!success) {
+		glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+		std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+	}
+
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+
+	return shaderProgram;
+}
+
+
+// Function to insert a 3D vector (three float values) into a given array
+void insertVec3(std::vector<float>& array, float valx, float valy, float valz)
+{
+	// Add the x, y, z values to the end of the array
+	array.push_back(valx); // Add x-coordinate
+	array.push_back(valy); // Add y-coordinate
+	array.push_back(valz); // Add z-coordinate
+}
+
+
+// Function to create a Net Mesh for 3D models
+void prepareNet()
+{
+	// Define the dimensions and step size of the net
+	float xsize = 7;
+	float ysize = 7;
+	float step = 1.0f; // Size of each small square in the net
+
+	// Vector to store vertex data
+	std::vector<float> vertices_value;
+
+	// Loop over x and y values, insert vertices for each square in the net
+	for (float x = -xsize / 2; x <= xsize / 2; x += step) {
+		for (float z = -ysize / 2; z <= ysize / 2; z += step) {
+
+			// Insert four vertices for each square in the net
+			insertVec3(vertices_value, x, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z + step);
+			insertVec3(vertices_value, x, 0.0f, z + step);
+
+			// Insert four vertices for each square in the net in reverse order
+			insertVec3(vertices_value, x + step, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z + step);
+			insertVec3(vertices_value, x, 0.0f, z);
+			insertVec3(vertices_value, x, 0.0f, z + step);
+		}
+	}
+
+	// Compute the total number of vertices
+	netSize = (int)vertices_value.size() / 3;
+
+	// Generate unique IDs for Vertex Array Object and Vertex Buffer Object
+	glGenVertexArrays(1, &vaoNet);
+	glGenBuffers(1, &vboNet);
+
+	// Bind the Vertex Array Object
+	glBindVertexArray(vaoNet);
+
+	// Bind the Vertex Buffer Object and assign vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, vboNet);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vertices_value.size(), vertices_value.data(), GL_STATIC_DRAW);
+
+	// Specify the attributes of the vertices (position)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0); // Enable vertex attribute at location 0
+}
+
+
+// Function to create a grid for the 3D space
+void prepareGrid()
+{
+	// Define the dimensions and step size of the grid
+	float size = 100.0f; // Size of the square grid
+	float step = 1.0f; // Size of each small square in the grid
+
+	// Vector to store vertex data
+	std::vector<float> vertices_value;
+
+	// Loop over x and z values, insert vertices for each square in the grid
+	for (float x = -size / 2; x <= size / 2; x += step) {
+		for (float z = -size / 2; z <= size / 2; z += step) {
+
+			// Insert four vertices for each square in the grid
+			insertVec3(vertices_value, x, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z + step);
+			insertVec3(vertices_value, x, 0.0f, z + step);
+
+			// Insert four vertices for each square in the grid in reverse order
+			insertVec3(vertices_value, x + step, 0.0f, z);
+			insertVec3(vertices_value, x + step, 0.0f, z + step);
+			insertVec3(vertices_value, x, 0.0f, z);
+			insertVec3(vertices_value, x, 0.0f, z + step);
+		}
+	}
+
+	// Compute the total number of vertices
+	gridSize = (int)vertices_value.size() / 3;
+
+	// Generate unique IDs for Vertex Array Object and Vertex Buffer Object
+	glGenVertexArrays(1, &vaoGrid);
+	glGenBuffers(1, &vboGrid);
+
+	// Bind the Vertex Array Object
+	glBindVertexArray(vaoGrid);
+
+	// Bind the Vertex Buffer Object and assign vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, vboGrid);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vertices_value.size(), vertices_value.data(), GL_STATIC_DRAW);
+
+	// Specify the attributes of the vertices (position)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0); // Enable vertex attribute at location 0
+}
+
+
+// Function to create axes for the 3D space
+void prepareAxes()
+{
+	// Vector to store vertex data for the axes
+	std::vector<float> vertices_value;
+
+	// Define vertices for the x-axis
+	insertVec3(vertices_value, 0, 0.01, 0);
+	insertVec3(vertices_value, 5, 0.01, 0);
+
+	// Define vertices for the y-axis
+	insertVec3(vertices_value, 0, 0.01, 0);
+	insertVec3(vertices_value, 0, 5.01, 0);
+
+	// Define vertices for the z-axis
+	insertVec3(vertices_value, 0, 0.01, 0);
+	insertVec3(vertices_value, 0, 0.01, 5);
+
+	// Generate unique IDs for Vertex Array Object and Vertex Buffer Object
+	glGenVertexArrays(1, &vaoAxes);
+	glGenBuffers(1, &vboAxes);
+
+	// Bind the Vertex Array Object
+	glBindVertexArray(vaoAxes);
+
+	// Bind the Vertex Buffer Object and assign vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, vboAxes);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vertices_value.size(), vertices_value.data(), GL_STATIC_DRAW);
+
+	// Specify the attributes of the vertices (position)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0); // Enable vertex attribute at location 0
+}
+
+
+// Function to create a cube in the 3D space
+void prepareCube()
+{
+	// Define the vertices for the cube
+	float vertices[] = {
+		// each line defines a triangle
+		// the coordinates represent: x, y, z
+		// the six vertices define the two triangles that make up each face of the cube
+
+		// back face
+		-0.5f, -0.0f, -0.5f,
+		 0.5f, -0.0f, -0.5f,
+		 0.5f,  1.0f, -0.5f,
+		 0.5f,  1.0f, -0.5f,
+		-0.5f,  1.0f, -0.5f,
+		-0.5f, -0.0f, -0.5f,
+
+		// front face
+		-0.5f, -0.0f,  0.5f,
+		 0.5f, -0.0f,  0.5f,
+		 0.5f,  1.0f,  0.5f,
+		 0.5f,  1.0f,  0.5f,
+		-0.5f,  1.0f,  0.5f,
+		-0.5f, -0.0f,  0.5f,
+
+		// left face
+		-0.5f,  1.f,  0.5f,
+		-0.5f,  1.f, -0.5f,
+		-0.5f, -0.f, -0.5f,
+		-0.5f, -0.f, -0.5f,
+		-0.5f, -0.f,  0.5f,
+		-0.5f,  1.f,  0.5f,
+
+		// right face
+		 0.5f,  1.f,  0.5f,
+		 0.5f,  1.f, -0.5f,
+		 0.5f, -0.f, -0.5f,
+		 0.5f, -0.f, -0.5f,
+		 0.5f, -0.f,  0.5f,
+		 0.5f,  1.f,  0.5f,
+
+		 // bottom face
+		 -0.5f, -0.f, -0.5f,
+		  0.5f, -0.f, -0.5f,
+		  0.5f, -0.f,  0.5f,
+		  0.5f, -0.f,  0.5f,
+		 -0.5f, -0.f,  0.5f,
+		 -0.5f, -0.f, -0.5f,
+
+		 // top face
+		 -0.5f,  1.f, -0.5f,
+		  0.5f,  1.f, -0.5f,
+		  0.5f,  1.f,  0.5f,
+		  0.5f,  1.f,  0.5f,
+		 -0.5f,  1.f,  0.5f,
+		 -0.5f,  1.f, -0.5f,
+	};
+
+	// Generate unique IDs for Vertex Array Object and Vertex Buffer Object
+	glGenVertexArrays(1, &vaoCube);
+	glGenBuffers(1, &vboCube);
+
+	// Bind the Vertex Buffer Object and assign vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, vboCube);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+	// Bind the Vertex Array Object
+	glBindVertexArray(vboCube);
+
+	// Specify the attributes of the vertices (position)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0); // Enable vertex attribute at location 0
+}
+
+
+
+// Function to initialize OpenGL properties
+void initialGL()
+{
+	// Enable depth testing to ensure correct z-ordering of our fragments
+	glEnable(GL_DEPTH_TEST);
+
+	// Disable face culling. Face culling is a process which tells OpenGL not 
+	// to render faces of the object which are not visible to the viewer.
+	glDisable(GL_CULL_FACE);
+
+	// Prepare the vertex array objects for the grid, axes, cube, and net
+	prepareGrid();
+	prepareAxes();
+	prepareCube();
+	prepareNet();
+
+	// Compile and link the shaders. Assign the resulting shader program ID to 'shaderProgram'
+	shaderProgram = compileAndLinkShaders();
+}
+
+
+// Function to draw the net with a specified color and model matrix
+void drawNet(glm::vec3 color, glm::mat4 mat)
+{
+	// Pass the model matrix to the shader
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(mat));
+
+	// Pass the color to the shader
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(color));
+
+	// Bind the vertex array object for the net
+	glBindVertexArray(vaoNet);
+
+	// Draw the net as lines
+	glDrawArrays(GL_LINES, 0, netSize);
+}
+
+// Function to draw a cube with a specified color and model matrix
+void drawCube(glm::vec3 color, glm::mat4 mat)
+{
+	// Bind the vertex array object for the cube
+	glBindVertexArray(vaoCube);
+
+	// Pass the model matrix to the shader
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(mat));
+
+	// Pass the color to the shader
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(color));
+
+	// Draw the cube as triangles. There are 36 vertices that make up the cube.
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+
+
+void drawModel(glm::mat4 worldMat)
+{
+
+	// The model is made of several parts: 2 arms, a hand, and a racket (including a top, bottom, left, and right part). 
+
+	// Arm 0
+	// Apply transformations: translation (to move the model in the 3D space), 
+	// scaling (to resize the model), and rotation (to rotate the model around the x, y, and z axes).
+	// Draw a cube for the arm with a specified color and transformation.
+
+	glm::mat4 armMat_0(1.f);
+	glm::mat4 trans_m_0 = glm::translate(glm::mat4(1.f), position_model);
+	glm::mat4 modelRX = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.x), glm::vec3(1, 0, 0));
+	glm::mat4 modelRY = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.y), glm::vec3(0, 1, 0));
+	glm::mat4 modelRZ = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.z), glm::vec3(0, 0, 1));
+	glm::mat4 modelS = glm::scale(glm::mat4(1.f), glm::vec3(scale_value, scale_value, scale_value));
+
+	armMat_0 = worldMat * trans_m_0 * modelS * modelRX * modelRY * modelRZ;
+
+	drawCube(glm::vec3(0.5, 0.7, 0.0), armMat_0 * glm::scale(glm::mat4(1.f), glm::vec3(1, 4, 1)));
+
+	// Arm 1
+	glm::mat4 armMat_1(1.f);
+	glm::mat4 trans_m_1 = glm::translate(glm::mat4(1.f), glm::vec3(0, 4, 0));
+	glm::mat4 rotate_m_1 = glm::rotate(glm::mat4(1.f), glm::radians(-60.f), glm::vec3(1, 0, 0));
+	armMat_1 = armMat_0 * trans_m_1 * rotate_m_1;
+
+	glm::mat4 scale_m_1 = glm::scale(glm::mat4(1.f), glm::vec3(1, 4, 1));
+	drawCube(glm::vec3(0.5, 0.7, 1.0), armMat_1 * scale_m_1);
+
+	// racket
+
+	// hand
+	glm::mat4 racket_hand(1.f);
+	glm::mat4 trans_m_hand = glm::translate(glm::mat4(1.f), glm::vec3(0, 4, 0));
+	glm::mat4 rotate_m_hand = glm::rotate(glm::mat4(1.f), glm::radians(30.f), glm::vec3(1, 0, 0));
+	racket_hand = armMat_1 * trans_m_hand * rotate_m_hand;
+
+	glm::mat4 scale_m_h = glm::scale(glm::mat4(1.f), glm::vec3(1, 4, 1));
+	drawCube(glm::vec3(0.9, 0.7, 0.0), racket_hand * scale_m_h);
+
+	// buttom
+	glm::mat4 racket_buttom(1.f);
+	glm::mat4 trans_m_b = glm::translate(glm::mat4(1.f), glm::vec3(0, 4, 0));
+
+	racket_buttom = racket_hand * trans_m_b;
+	glm::mat4 scale_m_b = glm::scale(glm::mat4(1.f), glm::vec3(8, 1, 1));
+	drawCube(glm::vec3(1.0, 0.7, 0.5), racket_buttom * scale_m_b);
+
+	// top
+	glm::mat4 racket_top(1.f);
+	glm::mat4 trans_m_t = glm::translate(glm::mat4(1.f), glm::vec3(0, 14, 0));
+
+	racket_top = racket_hand * trans_m_t;
+	glm::mat4 scale_m_t = glm::scale(glm::mat4(1.f), glm::vec3(8, 1, 1));
+	drawCube(glm::vec3(0.5, 0.7, 0.5), racket_top * scale_m_t);
+
+	// right
+	glm::mat4 racket_right(1.f);
+	glm::mat4 trans_m_r = glm::translate(glm::mat4(1.f), glm::vec3(4, 4, 0));
+
+	racket_right = racket_hand * trans_m_r;
+	glm::mat4 scale_m_r = glm::scale(glm::mat4(1.f), glm::vec3(1, 10, 1));
+	drawCube(glm::vec3(0.7, 0.7, 0.5), racket_right * scale_m_r);
+
+	// left
+	glm::mat4 racket_left(1.f);
+	glm::mat4 trans_m_l = glm::translate(glm::mat4(1.f), glm::vec3(-4, 4, 0));
+
+	racket_left = racket_hand * trans_m_l;
+	glm::mat4 scale_m_l = glm::scale(glm::mat4(1.f), glm::vec3(1, 10, 1));
+	drawCube(glm::vec3(0.7, 0.7, 0.5), racket_left * scale_m_l);
+
+	// net
+	glm::mat4 racket_net(1.f);
+	glm::mat4 trans_m_c = glm::translate(glm::mat4(1.f), glm::vec3(0, 10, 0));
+	glm::mat4 rotate_m_c = glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
+	racket_net = racket_hand * trans_m_c;
+	drawNet(glm::vec3(0.0, 1.0, 0.0), racket_net * rotate_m_c);
+}
+void drawModelP2(glm::mat4 worldMat)
+{
+	// The model is made of several parts: 2 arms, a hand, and a racket (including a top, bottom, left, and right part). 
+
+	// Arm 0
+	// Apply transformations: translation (to move the model in the 3D space), 
+	// scaling (to resize the model), and rotation (to rotate the model around the x, y, and z axes).
+	// Draw a cube for the arm with a specified color and transformation.
+	position_modelP2.x = 30.0f;
+	position_modelP2.y = 0.0f;
+	position_modelP2.z = 30.0f;
+	glm::mat4 armMat_0(1.f);
+	glm::mat4 trans_m_0 = glm::translate(glm::mat4(1.f), position_modelP2);
+	glm::mat4 modelRX = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.x), glm::vec3(1, 0, 0));
+	glm::mat4 modelRY = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.y), glm::vec3(0, 1, 0));
+	glm::mat4 modelRZ = glm::rotate(glm::mat4(1.f), glm::radians(rotation_model.z), glm::vec3(0, 0, 1));
+	glm::mat4 modelS = glm::scale(glm::mat4(1.f), glm::vec3(scale_value, scale_value, scale_value));
+
+
+	armMat_0 = worldMat * trans_m_0 * modelS * modelRX * modelRY * modelRZ;
+
+	drawCube(glm::vec3(1.0, 1.0, 1.0), armMat_0 * glm::scale(glm::mat4(1.f), glm::vec3(1, 4, 1)));
+
+	// Arm 1
+	glm::mat4 armMat_1(1.f);
+	glm::mat4 trans_m_1 = glm::translate(glm::mat4(1.f), glm::vec3(0, 4, 0));
+	glm::mat4 rotate_m_1 = glm::rotate(glm::mat4(1.f), glm::radians(-60.f), glm::vec3(1, 0, 0));
+	armMat_1 = armMat_0 * trans_m_1 * rotate_m_1;
+
+	glm::mat4 scale_m_1 = glm::scale(glm::mat4(1.f), glm::vec3(1, 4, 1));
+	drawCube(glm::vec3(1.0, 1.0, 1.0), armMat_1 * scale_m_1);
+
+	// racket
+
+	// handle
+	glm::mat4 racket_hand(1.f);
+	glm::mat4 trans_m_hand = glm::translate(glm::mat4(1.f), glm::vec3(0, 4, 0));
+	glm::mat4 rotate_m_hand = glm::rotate(glm::mat4(1.f), glm::radians(30.f), glm::vec3(1, 0, 0));
+	racket_hand = armMat_1 * trans_m_hand * rotate_m_hand;
+
+	glm::mat4 scale_m_h = glm::scale(glm::mat4(1.f), glm::vec3(1.2, 6, 1.2));
+	drawCube(glm::vec3(0.0, 0.0, 0.0), racket_hand * scale_m_h);
+
+	// buttom
+	glm::mat4 racket_buttom(1.f);
+	glm::mat4 trans_m_b = glm::translate(glm::mat4(1.f), glm::vec3(0, 6, 0));
+
+	racket_buttom = racket_hand * trans_m_b;
+	glm::mat4 scale_m_b = glm::scale(glm::mat4(1.f), glm::vec3(8, 1.2, 1.2));
+	drawCube(glm::vec3(0.0, 0.0, 0.0), racket_buttom * scale_m_b);
+
+	// top
+	glm::mat4 racket_top(1.f);
+	glm::mat4 trans_m_t = glm::translate(glm::mat4(1.f), glm::vec3(0, 16, 0));
+
+	racket_top = racket_hand * trans_m_t;
+	glm::mat4 scale_m_t = glm::scale(glm::mat4(1.f), glm::vec3(8, 1.2, 1.2));
+	drawCube(glm::vec3(0.0, 0.0, 0.0), racket_top * scale_m_t);
+
+	// right
+	glm::mat4 racket_right(1.f);
+	glm::mat4 trans_m_r = glm::translate(glm::mat4(1.f), glm::vec3(4, 6.5, 0));
+
+	racket_right = racket_hand * trans_m_r;
+	glm::mat4 scale_m_r = glm::scale(glm::mat4(1.f), glm::vec3(1.2, 10, 1.2));
+	drawCube(glm::vec3(1.0, 0.0, 0.0), racket_right * scale_m_r);
+
+	// left
+	glm::mat4 racket_left(1.f);
+	glm::mat4 trans_m_l = glm::translate(glm::mat4(1.f), glm::vec3(-4, 6.5, 0));
+
+	racket_left = racket_hand * trans_m_l;
+	glm::mat4 scale_m_l = glm::scale(glm::mat4(1.f), glm::vec3(1.2, 10, 1.2));
+	drawCube(glm::vec3(1.0, 0.0, 0.0), racket_left * scale_m_l);
+
+	// net
+	glm::mat4 racket_net(1.f);
+	glm::mat4 trans_m_c = glm::translate(glm::mat4(1.f), glm::vec3(0, 12, 0));
+	glm::mat4 rotate_m_c = glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
+	racket_net = racket_hand * trans_m_c;
+	drawNet(glm::vec3(1.0, 1.0, 1.0), racket_net * rotate_m_c);
+}
+
+//function is used to set the render mode for the current frame, based on the value of the global renderMode variable.
+void drawFrame()
+{
+	// Draw geometry
+	switch (renderMode)
+	{
+	case 0:
+		//The GL_FRONT_AND_BACK parameter tells OpenGL to apply this mode to both front and back faces of polygons.
+		glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); //This line sets the polygon rasterization mode to point. In this mode, only vertices of polygons are drawn as points.
+		break;
+	case 1:
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // This line sets the polygon rasterization mode to line. In this mode, only the edges of polygons are drawn as lines, creating a wireframe view.
+		break;
+	case 2:
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); //This line sets the polygon rasterization mode to fill. In this mode, polygons are completely filled.
+		break;
+	default:
+		break;
+	}
+
+
+	// world matrix
+	//The code here first sets up a world transformation matrix that incorporates the current position and rotation of the world, then it applies this transformation to the grid.
+	glm::mat4 worldMat(1.f);
+	glm::mat4 worldT = glm::translate(glm::mat4(1.f), position_world);
+	glm::mat4 worldRX = glm::rotate(glm::mat4(1.f), glm::radians(rotation_world.x), glm::vec3(1, 0, 0));
+	glm::mat4 worldRY = glm::rotate(glm::mat4(1.f), glm::radians(rotation_world.y), glm::vec3(0, 1, 0));
+	glm::mat4 worldRZ = glm::rotate(glm::mat4(1.f), glm::radians(rotation_world.z), glm::vec3(0, 0, 1));
+
+	worldMat = worldT * worldRX * worldRY * worldRZ;
+
+	// Grid
+	glLineWidth(1.f);
+	glUseProgram(shaderProgram);
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(worldMat));
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMat));
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projMat));
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(yellowColor));
+
+	glBindVertexArray(vaoGrid);
+	glDrawArrays(GL_LINES, 0, gridSize);
+
+
+	// Axes
+	glEnable(GL_LINE_SMOOTH);
+	glEnable(GL_LINE_WIDTH);
+	glLineWidth(4.5f);
+	glBindVertexArray(vaoAxes);
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(redColor));
+	glDrawArrays(GL_LINES, 0, 2);
+
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(greenColor));
+	glDrawArrays(GL_LINES, 2, 2);
+
+	glUniform3fv(glGetUniformLocation(shaderProgram, "materialColor"), 1, glm::value_ptr(blueColor));
+	glDrawArrays(GL_LINES, 4, 2);
+
+	glBindVertexArray(0);
+	glDisable(GL_LINE_SMOOTH);
+	glDisable(GL_LINE_WIDTH);
+
+	// Model
+	drawModel(worldMat);
+
+
+	drawModelP2(worldMat);
+	// End Frame
+}
+
+
+int main(int argc, char* argv[])
+{
+	// Initialize GLFW and OpenGL version
+	glfwInit();
+
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+
+	// Create Window and rendering context using GLFW, resolution is 800x600
+	GLFWwindow* window = glfwCreateWindow(screenWidth, screenHeight, "Comp371 - Assignment 1", NULL, NULL);
+	if (window == NULL)
+	{
+		std::cerr << "Failed to create GLFW window" << std::endl;
+		glfwTerminate();
+		return -1;
+	}
+	glfwMakeContextCurrent(window);
+	glfwSetKeyCallback(window, key_callback);
+
+	projMat = glm::perspective(glm::radians(60.f), screenWidth / (float)screenHeight, 0.1f, 1000.f);
+
+	viewMat = glm::lookAt(glm::vec3(50.f, 50.f, 50.f), glm::vec3(0.f, 0.f, 0.f), glm::vec3(0, 1, 0));
+
+
+	// Initialize GLEW
+	glewExperimental = true; // Needed for core profile
+	if (glewInit() != GLEW_OK) {
+		std::cerr << "Failed to create GLEW" << std::endl;
+		glfwTerminate();
+		return -1;
+	}
+
+	// Black background
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+
+	initialGL();
+
+
+	// Variables to be used later in tutorial
+	float angle = 0;
+	float rotationSpeed = 180.0f;  // 180 degrees per second
+	float lastFrameTime = glfwGetTime();
+
+	// Entering Main Loop
+	while (!glfwWindowShouldClose(window))
+	{
+		// Each frame, reset color of each pixel to glClearColor
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		drawFrame();
+
+		glfwSwapBuffers(window);
+		glfwPollEvents();
+
+	}
+
+	// Shutdown GLFW
+	glfwTerminate();
+
+	return 0;
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+	// Close the window when ESC is pressed
+	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+	// Randomly move the model in the XZ plane when SPACE is pressed
+	if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
+	{
+		position_model = glm::linearRand(glm::vec3(-50.0f), glm::vec3(50.0f));
+		position_model.y = 0.f;
+	}
+
+	// Increase scale of the model when 'U' is pressed
+	if (key == GLFW_KEY_U && action == GLFW_PRESS)
+		scale_value += 0.1;
+
+	// Decrease scale of the model when 'J' is pressed
+	if (key == GLFW_KEY_J && action == GLFW_PRESS)
+		scale_value -= 0.1;
+
+	// Move the model in positive X direction when 'W' is pressed
+	if (key == GLFW_KEY_W && action == GLFW_PRESS)
+		position_model.x += 1;
+
+	// Move the model in positive Z direction when 'A' is pressed
+	if (key == GLFW_KEY_A && action == GLFW_PRESS)
+		position_model.z += 1;
+
+	// Move the model in negative X direction when 'S' is pressed
+	if (key == GLFW_KEY_S && action == GLFW_PRESS)
+		position_model.x -= 1;
+
+	// Move the model in negative Z direction when 'D' is pressed
+	if (key == GLFW_KEY_D && action == GLFW_PRESS)
+		position_model.z -= 1;
+
+	// Rotate the model in negative X direction when 'Z' is pressed
+	if (key == GLFW_KEY_Z && action == GLFW_PRESS)
+		rotation_model.x -= 5;
+
+	// Rotate the model in positive X direction when 'X' is pressed
+	if (key == GLFW_KEY_X && action == GLFW_PRESS)
+		rotation_model.x += 5;
+
+	// Set render mode to point when 'P' is pressed
+	if (key == GLFW_KEY_P && action == GLFW_PRESS)
+		renderMode = 0;
+
+	// Set render mode to line when 'L' is pressed
+	if (key == GLFW_KEY_L && action == GLFW_PRESS)
+		renderMode = 1;
+
+	// Set render mode to fill (triangle) when 'T' is pressed
+	if (key == GLFW_KEY_T && action == GLFW_PRESS)
+		renderMode = 2;
+
+	// Rotate the world in positive X direction when RIGHT arrow key is pressed
+	if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS)
+		rotation_world.x += 5.f;
+
+	// Rotate the world in positive Y direction when UP arrow key is pressed
+	if (key == GLFW_KEY_UP && action == GLFW_PRESS)
+		rotation_world.y += 5.f;
+
+	// Rotate the world in positive Z direction when DOWN arrow key is pressed
+	if (key == GLFW_KEY_DOWN && action == GLFW_PRESS)
+		rotation_world.z += 5.f;
+
+	// Rotate the world in negative X direction when LEFT arrow key is pressed
+	if (key == GLFW_KEY_LEFT && action == GLFW_PRESS)
+		rotation_world.x -= 5.f;
+}
